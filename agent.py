@@ -25,6 +25,32 @@ load_dotenv(dotenv_path=os.path.join(script_dir, ".env"))
 if not os.getenv("GOOGLE_API_KEY") and not os.getenv("HF_TOKEN"):
     raise ValueError("❌ Neither GOOGLE_API_KEY nor HF_TOKEN found. Please check your .env file.")
 
+WRITER_PERSONA = (
+    "You are a senior software engineer who occasionally shares genuine technical "
+    "observations on LinkedIn — not a content marketer, not a thought leader. "
+    "You write plainly, specifically, and without hype."
+)
+
+WRITING_RULES = (
+    "STRICT RULES — follow every one of these:\n"
+    "1. Write in first person, conversational tone. Like you are sharing a genuine thought, not a newsletter.\n"
+    "2. Open with a short 1-2 sentence hook that feels like something a real person would say — no generic 'Have you ever felt...' openers.\n"
+    "3. Give 2-3 technical takeaways as short paragraphs, NOT bullet points or headers. Weave them naturally into the text.\n"
+    "4. Use at most 2-3 emojis total in the entire post. Place them inline mid-sentence, not as bullet markers.\n"
+    "5. NO markdown formatting whatsoever. No ---, no ####, no **, no bullet dashes. Plain text only.\n"
+    "6. End with a single genuine question to invite discussion. Keep it short and specific, not broad.\n"
+    "7. Add 3 relevant hashtags on the last line.\n"
+    "8. Total length: 150-220 words. Tight and readable.\n"
+    "9. The last line before hashtags must be exactly: 'Full article: ' followed by the article URL. "
+    "The URL will be provided to you directly — use it verbatim, do not use a placeholder."
+)
+
+WRITING_RULES_SHORT = (
+    "Rules: plain text only, no bullet points, no markdown. "
+    "150-200 words. End with one specific question. "
+    "Last line: 'Full article: {url}' then 3 hashtags."
+)
+
 def run_llm_chain(prompt_template, input_data, structured_schema=None):
     """
     Runs a LangChain chain using Gemini 2.5 Flash as the primary model.
@@ -59,6 +85,15 @@ def run_llm_chain(prompt_template, input_data, structured_schema=None):
         
         print("🔄 Falling back to Qwen2.5-7B-Instruct via Hugging Face...")
         
+        # Swap full writing rules with WRITING_RULES_SHORT for Qwen fallback
+        try:
+            original_template = prompt_template.messages[0].prompt.template
+            if WRITING_RULES in original_template:
+                new_template = original_template.replace(WRITING_RULES, WRITING_RULES_SHORT)
+                prompt_template = ChatPromptTemplate.from_template(new_template)
+        except Exception as t_err:
+            print(f"⚠️ Failed to swap rules for Qwen: {t_err}")
+
         endpoint_llm = HuggingFaceEndpoint(
             repo_id="Qwen/Qwen2.5-7B-Instruct",
             task="text-generation",
@@ -96,7 +131,7 @@ class AgentState(TypedDict):
     relevance_score: int         
     target_audience: str         
     draft_post: str              
-    feedback: str                
+    feedback: Annotated[List[str], operator.add]            
     is_approved: bool            
 
 # Pydantic schema for Gemini's structured output
@@ -108,6 +143,8 @@ class CritiqueOutput(BaseModel):
 # ==========================================
 # 3. NODES & ROUTING LOGIC
 # ==========================================
+# Constants definition moved to setup section
+
 def fetch_news_node(state: AgentState) -> dict:
     print("\n📰 [Node] Fetching Hacker News Top Stories...")
     top_ids_url = "https://hacker-news.firebaseio.com/v0/topstories.json"
@@ -137,8 +174,11 @@ def filter_and_critique_node(state: AgentState) -> dict:
     prompt = ChatPromptTemplate.from_template(
         "You are an expert tech content curator. Review these Hacker News articles:\n\n"
         "{articles}\n\n"
-        "Select the single best article that has broad tech appeal and high engagement "
-        "potential for a professional LinkedIn post."
+        "Select the single best article based on these criteria in order:\n"
+        "1. Relevance to working software engineers or engineering managers\n"
+        "2. Practical insight — something that changes how someone thinks or works\n"
+        "3. Timeliness — recent trends over evergreen basics\n"
+        "4. Avoid: funding news, acquisition announcements, or pure research papers with no practical angle"
     )
     
     # Run chain with structured output constraints and fallback
@@ -155,22 +195,17 @@ def writer_node(state: AgentState) -> dict:
     article = state["selected_article"]
     audience = state["target_audience"]
     
-    prompt = ChatPromptTemplate.from_template(
-        "You are a senior tech professional who writes occasional LinkedIn posts — not a content marketer.\n"
+    print(f"DEBUG: url being passed = {article['url']}")
+    
+    prompt_text = (
+        f"{WRITER_PERSONA}\n\n"
         "Write a LinkedIn post based on this article:\n"
-        "Title: {title}\n"
-        "URL: {url}\n"
-        "Target Audience: {audience}\n\n"
-        "STRICT RULES — follow every one of these:\n"
-        "1. Write in first person, conversational tone. Like you are sharing a genuine thought, not a newsletter.\n"
-        "2. Open with a short 1-2 sentence hook that feels like something a real person would say — no generic 'Have you ever felt...' openers.\n"
-        "3. Give 2-3 technical takeaways as short paragraphs, NOT bullet points or headers. Weave them naturally into the text.\n"
-        "4. Use at most 2-3 emojis total in the entire post. Place them inline mid-sentence, not as bullet markers.\n"
-        "5. NO markdown formatting whatsoever. No ---, no ####, no **, no bullet dashes. Plain text only.\n"
-        "6. End with a single genuine question to invite discussion. Keep it short and specific, not broad.\n"
-        "7. Add 3 relevant hashtags on the last line.\n"
-        "8. Total length: 150-220 words. Tight and readable."
+        "Title: {{title}}\n"
+        "URL: {{url}}\n"
+        "Target Audience: {{audience}}\n\n"
+        f"{WRITING_RULES}"
     )
+    prompt = ChatPromptTemplate.from_template(prompt_text)
     
     result = run_llm_chain(prompt, {
         "title": article["title"],
@@ -181,27 +216,47 @@ def writer_node(state: AgentState) -> dict:
     return {"draft_post": result.content}
 
 def human_gate_node(state: AgentState) -> dict:
-    print("\n=== 📢 CURRENT LINKEDIN DRAFT ===")
+    print("\n" + "="*50)
     print(state["draft_post"])
-    print("================================\n")
+    print("="*50 + "\n")
     
     # Pause the graph execution and wait for your manual terminal input
     user_input = input("Satisfied? Type 'yes' to approve, or type your feedback to rewrite: ")
     
     if user_input.strip().lower() == 'yes':
-        return {"is_approved": True, "feedback": ""}
+        return {"is_approved": True}
     else:
-        return {"is_approved": False, "feedback": user_input}
+        return {"is_approved": False, "feedback": [user_input.strip()]}
 
 def revise_node(state: AgentState) -> dict:
     print("🔄 [Node] Revising draft based on your feedback...")
-    prompt = ChatPromptTemplate.from_template(
+    article = state["selected_article"]
+    
+    print(f"DEBUG: url being passed = {article['url']}")
+    
+    # Format the accumulated feedback history
+    feedback_history = "\n".join([f"- {fb}" for fb in state["feedback"]])
+    
+    prompt_text = (
+        f"{WRITER_PERSONA}\n\n"
         "You are updating a LinkedIn post based on user feedback.\n\n"
-        "Original Draft:\n{draft}\n\n"
-        "User Feedback: {feedback}\n\n"
-        "Please rewrite the post incorporating the feedback while maintaining high quality."
+        "Article Details:\n"
+        "Title: {{title}}\n"
+        "URL: {{url}}\n"
+        "Target Audience: {{audience}}\n\n"
+        "Original Draft:\n{{draft}}\n\n"
+        f"Feedback History:\n{feedback_history}\n\n"
+        "Please rewrite the post incorporating the feedback while strictly maintaining the rules.\n\n"
+        f"{WRITING_RULES}"
     )
-    result = run_llm_chain(prompt, {"draft": state["draft_post"], "feedback": state["feedback"]})
+    prompt = ChatPromptTemplate.from_template(prompt_text)
+    
+    result = run_llm_chain(prompt, {
+        "title": article["title"],
+        "url": article["url"],
+        "audience": state["target_audience"],
+        "draft": state["draft_post"]
+    })
     
     return {"draft_post": result.content}
 
@@ -307,7 +362,7 @@ if __name__ == "__main__":
         "relevance_score": 0,
         "target_audience": "",
         "draft_post": "",
-        "feedback": "",
+        "feedback": [],
         "is_approved": False
     }
     final_state = app.invoke(initial_state)
