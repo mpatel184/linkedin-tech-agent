@@ -1,18 +1,21 @@
-import sys
-sys.stdout.reconfigure(encoding='utf-8')
-import os
-import requests
-from typing import TypedDict, List, Annotated
 import operator
+import os
+import smtplib
+import sys
+from email.mime.multipart import MIMEMultipart
+from email.mime.text import MIMEText
+from typing import Annotated, List, TypedDict
+
+import requests
 from dotenv import load_dotenv
 from langchain_core.prompts import ChatPromptTemplate
-from pydantic import BaseModel, Field
 from langchain_google_genai import ChatGoogleGenerativeAI
 from langchain_huggingface import ChatHuggingFace, HuggingFaceEndpoint
 from langgraph.graph import StateGraph, END
-import smtplib
-from email.mime.text import MIMEText
-from email.mime.multipart import MIMEMultipart
+from pydantic import BaseModel, Field
+
+if hasattr(sys.stdout, "reconfigure"):
+    sys.stdout.reconfigure(encoding="utf-8")
 
 # ==========================================
 # 1. SETUP & CONFIGURATION
@@ -24,6 +27,50 @@ load_dotenv(dotenv_path=os.path.join(script_dir, ".env"))
 # Verify that at least one LLM API key is present
 if not os.getenv("GOOGLE_API_KEY") and not os.getenv("HF_TOKEN"):
     raise ValueError("❌ Neither GOOGLE_API_KEY nor HF_TOKEN found. Please check your .env file.")
+
+HN_TOP_STORIES_URL = "https://hacker-news.firebaseio.com/v0/topstories.json"
+HN_ITEM_URL = "https://hacker-news.firebaseio.com/v0/item/{story_id}.json"
+HN_REQUEST_TIMEOUT = 10
+HN_ARTICLE_LIMIT = 10
+
+
+class AgentPipelineError(RuntimeError):
+    """User-facing error raised when an external pipeline step cannot complete."""
+
+
+def extract_llm_text(result) -> str:
+    """Return text from either a chat message object or a plain string response."""
+    return result.content if hasattr(result, "content") else str(result)
+
+
+def enforce_article_url(draft: str, article_url: str) -> str:
+    """Ensure the final post uses the selected article URL, even if the LLM drifts."""
+    article_line = f"Full article: {article_url}"
+    lines = [line.rstrip() for line in draft.strip().splitlines()]
+
+    if not lines:
+        return article_line
+
+    for index, line in enumerate(lines):
+        if line.strip().lower().startswith("full article:"):
+            lines[index] = article_line
+            return "\n".join(lines).strip()
+
+    insert_at = len(lines)
+    while insert_at > 0 and not lines[insert_at - 1].strip():
+        insert_at -= 1
+
+    hashtag_start = insert_at
+    while hashtag_start > 0 and lines[hashtag_start - 1].lstrip().startswith("#"):
+        hashtag_start -= 1
+
+    if hashtag_start < insert_at:
+        lines.insert(hashtag_start, article_line)
+    else:
+        lines.extend(["", article_line])
+
+    return "\n".join(lines).strip()
+
 
 WRITER_PERSONA = (
     "You are a senior software engineer who occasionally shares genuine technical "
@@ -77,7 +124,9 @@ def run_llm_chain(prompt_template, input_data, structured_schema=None):
             print(f"❌ HF_TOKEN not found in environment.")
             print(f"   Detected API keys in environment: {detected_keys}")
             print("   Please ensure you have saved your `.env` file after editing.")
-            raise e
+            raise AgentPipelineError(
+                "Gemini failed and HF_TOKEN is not configured. Check GOOGLE_API_KEY, quota, or add HF_TOKEN."
+            ) from e
         
         # Ensure the token is set in standard Hugging Face env vars
         os.environ["HUGGINGFACEHUB_API_TOKEN"] = hf_token
@@ -112,8 +161,13 @@ def run_llm_chain(prompt_template, input_data, structured_schema=None):
             prompt_template = prompt_template + json_instruction
             llm = llm.with_structured_output(structured_schema, method="json_mode")
             
-        chain = prompt_template | llm
-        result = chain.invoke(input_data)
+        try:
+            chain = prompt_template | llm
+            result = chain.invoke(input_data)
+        except Exception as hf_error:
+            raise AgentPipelineError(
+                "Both Gemini and Hugging Face generation failed. Check API keys, quota, and network connection."
+            ) from hf_error
         
         # Convert dictionary to Pydantic object if using json_mode and structured schema
         if structured_schema and isinstance(result, dict):
@@ -147,20 +201,42 @@ class CritiqueOutput(BaseModel):
 
 def fetch_news_node(state: AgentState) -> dict:
     print("\n📰 [Node] Fetching Hacker News Top Stories...")
-    top_ids_url = "https://hacker-news.firebaseio.com/v0/topstories.json"
-    top_ids = requests.get(top_ids_url).json()
-    
+    try:
+        response = requests.get(HN_TOP_STORIES_URL, timeout=HN_REQUEST_TIMEOUT)
+        response.raise_for_status()
+        top_ids = response.json()
+    except requests.RequestException as exc:
+        raise AgentPipelineError(
+            "Could not fetch Hacker News stories. Check your internet connection and try again."
+        ) from exc
+    except ValueError as exc:
+        raise AgentPipelineError("Hacker News returned an unexpected response. Try again.") from exc
+
+    if not isinstance(top_ids, list):
+        raise AgentPipelineError("Hacker News returned an unexpected story list. Try again.")
+
     fetched_articles = []
-    # Fetch details for the top 5 stories on the front page
-    for story_id in top_ids[:10]:
-        story_url = f"https://hacker-news.firebaseio.com/v0/item/{story_id}.json"
-        story_data = requests.get(story_url).json()
-        
+    for story_id in top_ids[:HN_ARTICLE_LIMIT]:
+        story_url = HN_ITEM_URL.format(story_id=story_id)
+        try:
+            story_response = requests.get(story_url, timeout=HN_REQUEST_TIMEOUT)
+            story_response.raise_for_status()
+            story_data = story_response.json() or {}
+        except (requests.RequestException, ValueError) as exc:
+            print(f"Skipping story {story_id}: {exc}")
+            continue
+
+        if not story_data.get("title"):
+            continue
+
         fetched_articles.append({
             "title": story_data.get("title"),
             "url": story_data.get("url", f"https://news.ycombinator.com/item?id={story_id}"),
             "score": story_data.get("score")
         })
+    if not fetched_articles:
+        raise AgentPipelineError("Could not load any Hacker News article details. Try again in a minute.")
+
     return {"raw_news": fetched_articles}
 
 def filter_and_critique_node(state: AgentState) -> dict:
@@ -184,18 +260,29 @@ def filter_and_critique_node(state: AgentState) -> dict:
     # Run chain with structured output constraints and fallback
     result = run_llm_chain(prompt, {"articles": articles_text}, CritiqueOutput)
     
+    selected_index = getattr(result, "selected_index", 0)
+    try:
+        selected_index = int(selected_index)
+    except (TypeError, ValueError):
+        selected_index = 0
+    selected_index = max(0, min(selected_index, len(articles) - 1))
+
+    relevance_score = getattr(result, "relevance_score", 0)
+    try:
+        relevance_score = max(1, min(int(relevance_score), 10))
+    except (TypeError, ValueError):
+        relevance_score = 0
+
     return {
-        "selected_article": articles[result.selected_index],
-        "relevance_score": result.relevance_score,
-        "target_audience": result.target_audience
+        "selected_article": articles[selected_index],
+        "relevance_score": relevance_score,
+        "target_audience": getattr(result, "target_audience", "Software Engineers")
     }
 
 def writer_node(state: AgentState) -> dict:
     print("✍️ [Node] Drafting LinkedIn post with Gemini...")
     article = state["selected_article"]
     audience = state["target_audience"]
-    
-    print(f"DEBUG: url being passed = {article['url']}")
     
     prompt_text = (
         f"{WRITER_PERSONA}\n\n"
@@ -213,7 +300,8 @@ def writer_node(state: AgentState) -> dict:
         "audience": audience
     })
     
-    return {"draft_post": result.content}
+    draft_post = enforce_article_url(extract_llm_text(result), article["url"])
+    return {"draft_post": draft_post}
 
 def human_gate_node(state: AgentState) -> dict:
     print("\n" + "="*50)
@@ -231,8 +319,6 @@ def human_gate_node(state: AgentState) -> dict:
 def revise_node(state: AgentState) -> dict:
     print("🔄 [Node] Revising draft based on your feedback...")
     article = state["selected_article"]
-    
-    print(f"DEBUG: url being passed = {article['url']}")
     
     # Format the accumulated feedback history
     feedback_history = "\n".join([f"- {fb}" for fb in state["feedback"]])
@@ -258,7 +344,8 @@ def revise_node(state: AgentState) -> dict:
         "draft": state["draft_post"]
     })
     
-    return {"draft_post": result.content}
+    draft_post = enforce_article_url(extract_llm_text(result), article["url"])
+    return {"draft_post": draft_post}
 
 def send_email_node(state: AgentState) -> dict:
     print("\n📧 [Node] Sending approved post to your email...")
@@ -352,7 +439,63 @@ workflow.add_edge("publisher_node", END)
 app = workflow.compile()
 
 # ==========================================
-# 5. EXECUTION ENTRYPOINT
+# 5. REUSABLE API FUNCTIONS (for web frontend)
+# ==========================================
+def run_agent_pipeline():
+    """
+    Runs fetch → filter → write pipeline and returns the state dict
+    with the first draft ready for human review.
+    """
+    state = {
+        "raw_news": [],
+        "selected_article": {},
+        "relevance_score": 0,
+        "target_audience": "",
+        "draft_post": "",
+        "feedback": [],
+        "is_approved": False
+    }
+
+    # Step 1: Fetch news
+    result = fetch_news_node(state)
+    state.update(result)
+
+    # Step 2: Filter and critique
+    result = filter_and_critique_node(state)
+    state.update(result)
+
+    # Step 3: Write draft
+    result = writer_node(state)
+    state.update(result)
+
+    return state
+
+
+def revise_draft(state, feedback_text):
+    """
+    Runs the revise node with accumulated feedback and returns updated state.
+    """
+    # Append new feedback to history
+    state["feedback"] = state.get("feedback", []) + [feedback_text]
+
+    result = revise_node(state)
+    state.update(result)
+
+    return state
+
+
+def approve_and_send(state):
+    """
+    Marks the draft as approved and sends the email.
+    Returns a status message.
+    """
+    state["is_approved"] = True
+    send_email_node(state)
+    return state
+
+
+# ==========================================
+# 6. TERMINAL ENTRYPOINT
 # ==========================================
 if __name__ == "__main__":
     print("🚀 Starting the LangGraph Tech Agent...")

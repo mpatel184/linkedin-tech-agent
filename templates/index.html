@@ -1,0 +1,811 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>LinkedIn Tech Agent</title>
+    <meta name="description" content="AI-powered LinkedIn post curator and writer">
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&display=swap" rel="stylesheet">
+    <style>
+        *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+
+        :root {
+            --bg-primary: #0f1117;
+            --bg-secondary: #161922;
+            --bg-card: #1c1f2e;
+            --bg-card-hover: #22253a;
+            --bg-input: #12141d;
+            --border: #2a2d3e;
+            --border-focus: #6366f1;
+            --text-primary: #e8eaed;
+            --text-secondary: #9ca3af;
+            --text-muted: #6b7280;
+            --accent: #6366f1;
+            --accent-hover: #818cf8;
+            --accent-glow: rgba(99, 102, 241, 0.15);
+            --success: #22c55e;
+            --success-bg: rgba(34, 197, 94, 0.1);
+            --warning: #f59e0b;
+            --danger: #ef4444;
+            --radius: 12px;
+            --radius-sm: 8px;
+            --shadow: 0 4px 24px rgba(0, 0, 0, 0.3);
+        }
+
+        body {
+            font-family: 'Inter', -apple-system, BlinkMacSystemFont, sans-serif;
+            background: var(--bg-primary);
+            color: var(--text-primary);
+            min-height: 100vh;
+            line-height: 1.6;
+        }
+
+        /* Header */
+        .header {
+            background: linear-gradient(135deg, var(--bg-secondary), var(--bg-card));
+            border-bottom: 1px solid var(--border);
+            padding: 20px 0;
+            position: sticky;
+            top: 0;
+            z-index: 100;
+            backdrop-filter: blur(12px);
+        }
+
+        .header-inner {
+            max-width: 1100px;
+            margin: 0 auto;
+            padding: 0 24px;
+            display: flex;
+            align-items: center;
+            justify-content: space-between;
+        }
+
+        .logo {
+            display: flex;
+            align-items: center;
+            gap: 12px;
+        }
+
+        .logo-icon {
+            width: 40px;
+            height: 40px;
+            background: linear-gradient(135deg, var(--accent), #a855f7);
+            border-radius: 10px;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            font-size: 20px;
+        }
+
+        .logo h1 {
+            font-size: 1.25rem;
+            font-weight: 600;
+            letter-spacing: -0.02em;
+        }
+
+        .logo span {
+            font-size: 0.8rem;
+            color: var(--text-muted);
+            font-weight: 400;
+        }
+
+        /* Status bar */
+        .status-bar {
+            display: flex;
+            align-items: center;
+            gap: 8px;
+            font-size: 0.8rem;
+            color: var(--text-muted);
+        }
+
+        .status-dot {
+            width: 8px;
+            height: 8px;
+            border-radius: 50%;
+            background: var(--text-muted);
+        }
+
+        .status-dot.active { background: var(--success); box-shadow: 0 0 8px var(--success); }
+        .status-dot.loading { background: var(--warning); animation: pulse 1.2s infinite; }
+
+        @keyframes pulse {
+            0%, 100% { opacity: 1; }
+            50% { opacity: 0.4; }
+        }
+
+        /* Main layout */
+        .main {
+            max-width: 1100px;
+            margin: 0 auto;
+            padding: 32px 24px;
+            display: grid;
+            grid-template-columns: 1fr 320px;
+            gap: 24px;
+        }
+
+        @media (max-width: 860px) {
+            .main { grid-template-columns: 1fr; }
+        }
+
+        /* Cards */
+        .card {
+            background: var(--bg-card);
+            border: 1px solid var(--border);
+            border-radius: var(--radius);
+            padding: 24px;
+            box-shadow: var(--shadow);
+            transition: border-color 0.2s;
+        }
+
+        .card:hover { border-color: var(--border-focus); }
+
+        .card-title {
+            font-size: 0.75rem;
+            font-weight: 600;
+            text-transform: uppercase;
+            letter-spacing: 0.08em;
+            color: var(--text-muted);
+            margin-bottom: 16px;
+        }
+
+        /* Generate section */
+        .generate-section {
+            text-align: center;
+            padding: 48px 24px;
+        }
+
+        .generate-section h2 {
+            font-size: 1.5rem;
+            font-weight: 600;
+            margin-bottom: 8px;
+        }
+
+        .generate-section p {
+            color: var(--text-secondary);
+            margin-bottom: 24px;
+            max-width: 480px;
+            margin-left: auto;
+            margin-right: auto;
+        }
+
+        /* Buttons */
+        .btn {
+            display: inline-flex;
+            align-items: center;
+            gap: 8px;
+            padding: 12px 24px;
+            border: none;
+            border-radius: var(--radius-sm);
+            font-family: inherit;
+            font-size: 0.9rem;
+            font-weight: 500;
+            cursor: pointer;
+            transition: all 0.2s;
+        }
+
+        .btn:disabled {
+            opacity: 0.5;
+            cursor: not-allowed;
+        }
+
+        .btn-primary {
+            background: linear-gradient(135deg, var(--accent), #a855f7);
+            color: #fff;
+            box-shadow: 0 4px 16px var(--accent-glow);
+        }
+
+        .btn-primary:hover:not(:disabled) {
+            transform: translateY(-1px);
+            box-shadow: 0 6px 24px var(--accent-glow);
+        }
+
+        .btn-secondary {
+            background: var(--bg-secondary);
+            color: var(--text-primary);
+            border: 1px solid var(--border);
+        }
+
+        .btn-secondary:hover:not(:disabled) {
+            border-color: var(--accent);
+            background: var(--bg-card-hover);
+        }
+
+        .btn-success {
+            background: linear-gradient(135deg, #16a34a, #15803d);
+            color: #fff;
+        }
+
+        .btn-success:hover:not(:disabled) {
+            transform: translateY(-1px);
+            box-shadow: 0 4px 16px rgba(34, 197, 94, 0.2);
+        }
+
+        .btn-outline {
+            background: transparent;
+            color: var(--text-secondary);
+            border: 1px solid var(--border);
+        }
+
+        .btn-outline:hover:not(:disabled) {
+            color: var(--text-primary);
+            border-color: var(--text-secondary);
+        }
+
+        /* Draft display */
+        .draft-area {
+            background: var(--bg-input);
+            border: 1px solid var(--border);
+            border-radius: var(--radius-sm);
+            padding: 20px;
+            margin-bottom: 20px;
+            white-space: pre-wrap;
+            line-height: 1.8;
+            font-size: 0.95rem;
+            color: var(--text-primary);
+            min-height: 200px;
+            max-height: 500px;
+            overflow-y: auto;
+        }
+
+        .draft-area:empty::before {
+            content: "Your LinkedIn post will appear here...";
+            color: var(--text-muted);
+        }
+
+        /* Article metadata */
+        .article-meta {
+            display: grid;
+            grid-template-columns: 1fr 1fr;
+            gap: 12px;
+            margin-bottom: 20px;
+        }
+
+        .meta-item {
+            background: var(--bg-input);
+            border: 1px solid var(--border);
+            border-radius: var(--radius-sm);
+            padding: 12px;
+        }
+
+        .meta-label {
+            font-size: 0.7rem;
+            text-transform: uppercase;
+            letter-spacing: 0.06em;
+            color: var(--text-muted);
+            margin-bottom: 4px;
+        }
+
+        .meta-value {
+            font-size: 0.85rem;
+            color: var(--text-primary);
+            word-break: break-word;
+        }
+
+        .meta-value a {
+            color: var(--accent-hover);
+            text-decoration: none;
+        }
+
+        .meta-value a:hover { text-decoration: underline; }
+
+        /* Actions bar */
+        .actions-bar {
+            display: flex;
+            gap: 12px;
+            flex-wrap: wrap;
+        }
+
+        /* Feedback input */
+        .feedback-group {
+            margin-bottom: 16px;
+        }
+
+        .feedback-input {
+            width: 100%;
+            background: var(--bg-input);
+            border: 1px solid var(--border);
+            border-radius: var(--radius-sm);
+            padding: 12px 16px;
+            color: var(--text-primary);
+            font-family: inherit;
+            font-size: 0.9rem;
+            resize: vertical;
+            min-height: 80px;
+            transition: border-color 0.2s;
+        }
+
+        .feedback-input::placeholder { color: var(--text-muted); }
+        .feedback-input:focus { outline: none; border-color: var(--accent); }
+
+        /* Sidebar */
+        .sidebar { display: flex; flex-direction: column; gap: 20px; }
+
+        /* Progress steps */
+        .progress-steps { list-style: none; }
+
+        .progress-step {
+            display: flex;
+            align-items: center;
+            gap: 12px;
+            padding: 10px 0;
+            border-bottom: 1px solid var(--border);
+            font-size: 0.85rem;
+            color: var(--text-muted);
+        }
+
+        .progress-step:last-child { border-bottom: none; }
+
+        .step-icon {
+            width: 28px;
+            height: 28px;
+            border-radius: 50%;
+            background: var(--bg-input);
+            border: 2px solid var(--border);
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            font-size: 0.75rem;
+            flex-shrink: 0;
+            transition: all 0.3s;
+        }
+
+        .progress-step.done .step-icon {
+            background: var(--success-bg);
+            border-color: var(--success);
+            color: var(--success);
+        }
+
+        .progress-step.active .step-icon {
+            border-color: var(--accent);
+            color: var(--accent);
+            animation: pulse 1.2s infinite;
+        }
+
+        .progress-step.done, .progress-step.active { color: var(--text-primary); }
+
+        /* Feedback history */
+        .feedback-list { list-style: none; }
+
+        .feedback-item {
+            padding: 10px 12px;
+            margin-bottom: 8px;
+            background: var(--bg-input);
+            border-radius: var(--radius-sm);
+            border-left: 3px solid var(--accent);
+            font-size: 0.8rem;
+            color: var(--text-secondary);
+            line-height: 1.5;
+        }
+
+        .feedback-item .round {
+            color: var(--text-muted);
+            font-size: 0.7rem;
+            margin-bottom: 4px;
+        }
+
+        .empty-state {
+            text-align: center;
+            color: var(--text-muted);
+            font-size: 0.8rem;
+            padding: 16px;
+        }
+
+        /* Toast notification */
+        .toast {
+            position: fixed;
+            bottom: 24px;
+            right: 24px;
+            padding: 14px 20px;
+            border-radius: var(--radius-sm);
+            font-size: 0.85rem;
+            font-weight: 500;
+            box-shadow: 0 8px 32px rgba(0, 0, 0, 0.4);
+            transform: translateY(100px);
+            opacity: 0;
+            transition: all 0.3s cubic-bezier(0.34, 1.56, 0.64, 1);
+            z-index: 1000;
+        }
+
+        .toast.show { transform: translateY(0); opacity: 1; }
+        .toast.success { background: #16a34a; color: #fff; }
+        .toast.error { background: var(--danger); color: #fff; }
+        .toast.info { background: var(--accent); color: #fff; }
+
+        /* Spinner */
+        .spinner {
+            display: inline-block;
+            width: 18px;
+            height: 18px;
+            border: 2px solid rgba(255,255,255,0.3);
+            border-top-color: #fff;
+            border-radius: 50%;
+            animation: spin 0.7s linear infinite;
+        }
+
+        @keyframes spin { to { transform: rotate(360deg); } }
+
+        /* Fade in animation */
+        @keyframes fadeIn {
+            from { opacity: 0; transform: translateY(8px); }
+            to { opacity: 1; transform: translateY(0); }
+        }
+
+        .fade-in { animation: fadeIn 0.4s ease-out; }
+
+        /* Scrollbar */
+        ::-webkit-scrollbar { width: 6px; }
+        ::-webkit-scrollbar-track { background: transparent; }
+        ::-webkit-scrollbar-thumb { background: var(--border); border-radius: 3px; }
+        ::-webkit-scrollbar-thumb:hover { background: var(--text-muted); }
+
+        /* Hidden */
+        .hidden { display: none !important; }
+
+        /* Word count badge */
+        .word-count {
+            font-size: 0.75rem;
+            color: var(--text-muted);
+            text-align: right;
+            margin-top: 4px;
+        }
+
+        /* Copy success checkmark */
+        .copy-check {
+            color: var(--success);
+        }
+    </style>
+</head>
+<body>
+
+    <!-- Header -->
+    <header class="header">
+        <div class="header-inner">
+            <div class="logo">
+                <div class="logo-icon">🚀</div>
+                <div>
+                    <h1>LinkedIn Tech Agent</h1>
+                    <span>AI-curated posts from Hacker News</span>
+                </div>
+            </div>
+            <div class="status-bar">
+                <div class="status-dot" id="statusDot"></div>
+                <span id="statusText">Ready</span>
+            </div>
+        </div>
+    </header>
+
+    <!-- Main -->
+    <main class="main">
+        <!-- Left column -->
+        <div class="left-col">
+
+            <!-- Generate section (shown initially) -->
+            <div class="card generate-section" id="generateSection">
+                <h2>Generate a LinkedIn Post</h2>
+                <p>Fetches trending Hacker News stories, selects the best one, and drafts an engaging LinkedIn post for you.</p>
+                <button class="btn btn-primary" id="generateBtn" onclick="generateDraft()">
+                    <span id="generateBtnText">⚡ Generate Draft</span>
+                </button>
+            </div>
+
+            <!-- Draft section (shown after generation) -->
+            <div class="card hidden" id="draftSection">
+                <div class="card-title">📝 Draft Post</div>
+
+                <!-- Article metadata -->
+                <div class="article-meta" id="articleMeta">
+                    <div class="meta-item">
+                        <div class="meta-label">Article</div>
+                        <div class="meta-value" id="metaTitle">—</div>
+                    </div>
+                    <div class="meta-item">
+                        <div class="meta-label">Source</div>
+                        <div class="meta-value" id="metaUrl">—</div>
+                    </div>
+                    <div class="meta-item">
+                        <div class="meta-label">Audience</div>
+                        <div class="meta-value" id="metaAudience">—</div>
+                    </div>
+                    <div class="meta-item">
+                        <div class="meta-label">Relevance</div>
+                        <div class="meta-value" id="metaScore">—</div>
+                    </div>
+                </div>
+
+                <!-- Draft text -->
+                <div class="draft-area" id="draftText"></div>
+                <div class="word-count" id="wordCount"></div>
+
+                <!-- Feedback -->
+                <div class="feedback-group">
+                    <textarea class="feedback-input" id="feedbackInput"
+                        placeholder="Type your feedback here... e.g. 'Make it shorter', 'Focus more on architecture'"
+                    ></textarea>
+                </div>
+
+                <!-- Action buttons -->
+                <div class="actions-bar">
+                    <button class="btn btn-secondary" id="reviseBtn" onclick="reviseDraft()">
+                        <span id="reviseBtnText">🔄 Revise</span>
+                    </button>
+                    <button class="btn btn-success" id="approveBtn" onclick="approveDraft()">
+                        <span id="approveBtnText">✅ Approve & Send Email</span>
+                    </button>
+                    <button class="btn btn-outline" onclick="copyDraft()">
+                        <span id="copyBtnText">📋 Copy</span>
+                    </button>
+                    <button class="btn btn-outline" onclick="generateDraft()">
+                        <span>🔁 New Draft</span>
+                    </button>
+                </div>
+            </div>
+        </div>
+
+        <!-- Right sidebar -->
+        <div class="sidebar">
+            <!-- Pipeline progress -->
+            <div class="card">
+                <div class="card-title">Pipeline Progress</div>
+                <ul class="progress-steps" id="progressSteps">
+                    <li class="progress-step" id="step-fetch">
+                        <div class="step-icon">1</div>
+                        <span>Fetch Hacker News</span>
+                    </li>
+                    <li class="progress-step" id="step-filter">
+                        <div class="step-icon">2</div>
+                        <span>Analyze & Select</span>
+                    </li>
+                    <li class="progress-step" id="step-draft">
+                        <div class="step-icon">3</div>
+                        <span>Draft Post</span>
+                    </li>
+                    <li class="progress-step" id="step-review">
+                        <div class="step-icon">4</div>
+                        <span>Your Review</span>
+                    </li>
+                    <li class="progress-step" id="step-done">
+                        <div class="step-icon">5</div>
+                        <span>Approved & Sent</span>
+                    </li>
+                </ul>
+            </div>
+
+            <!-- Revision history -->
+            <div class="card">
+                <div class="card-title">Revision History</div>
+                <ul class="feedback-list" id="feedbackList">
+                    <li class="empty-state">No revisions yet</li>
+                </ul>
+            </div>
+        </div>
+    </main>
+
+    <!-- Toast -->
+    <div class="toast" id="toast"></div>
+
+    <script>
+        // ==========================================
+        // STATE
+        // ==========================================
+        let isLoading = false;
+
+        // ==========================================
+        // HELPERS
+        // ==========================================
+        function setStatus(text, mode = 'idle') {
+            const dot = document.getElementById('statusDot');
+            const label = document.getElementById('statusText');
+            dot.className = 'status-dot';
+            if (mode === 'loading') dot.classList.add('loading');
+            if (mode === 'active') dot.classList.add('active');
+            label.textContent = text;
+        }
+
+        function showToast(message, type = 'info') {
+            const toast = document.getElementById('toast');
+            toast.textContent = message;
+            toast.className = `toast ${type}`;
+            requestAnimationFrame(() => toast.classList.add('show'));
+            setTimeout(() => toast.classList.remove('show'), 3500);
+        }
+
+        function setProgress(activeStep) {
+            const steps = ['fetch', 'filter', 'draft', 'review', 'done'];
+            const activeIdx = steps.indexOf(activeStep);
+            steps.forEach((s, i) => {
+                const el = document.getElementById(`step-${s}`);
+                el.className = 'progress-step';
+                if (i < activeIdx) el.classList.add('done');
+                else if (i === activeIdx) el.classList.add('active');
+            });
+        }
+
+        function resetProgress() {
+            ['fetch', 'filter', 'draft', 'review', 'done'].forEach(s => {
+                document.getElementById(`step-${s}`).className = 'progress-step';
+            });
+        }
+
+        function updateWordCount(text) {
+            const count = text.trim().split(/\s+/).filter(Boolean).length;
+            document.getElementById('wordCount').textContent = `${count} words`;
+        }
+
+        function updateFeedbackHistory(feedbackList) {
+            const container = document.getElementById('feedbackList');
+            if (!feedbackList || feedbackList.length === 0) {
+                container.innerHTML = '<li class="empty-state">No revisions yet</li>';
+                return;
+            }
+            container.innerHTML = feedbackList.map((fb, i) =>
+                `<li class="feedback-item fade-in">
+                    <div class="round">Round ${i + 1}</div>
+                    ${fb}
+                </li>`
+            ).join('');
+        }
+
+        function setBtnLoading(btnId, textId, loading, loadingText = 'Working...') {
+            const btn = document.getElementById(btnId);
+            const text = document.getElementById(textId);
+            btn.disabled = loading;
+            if (loading) {
+                text.dataset.original = text.innerHTML;
+                text.innerHTML = `<span class="spinner"></span> ${loadingText}`;
+            } else {
+                text.innerHTML = text.dataset.original || text.innerHTML;
+            }
+        }
+
+        // ==========================================
+        // API CALLS
+        // ==========================================
+        async function generateDraft() {
+            if (isLoading) return;
+            isLoading = true;
+
+            setBtnLoading('generateBtn', 'generateBtnText', true, 'Generating...');
+            setStatus('Fetching news & drafting...', 'loading');
+            setProgress('fetch');
+
+            // Animate progress steps with delays
+            setTimeout(() => setProgress('filter'), 2000);
+            setTimeout(() => setProgress('draft'), 5000);
+
+            try {
+                const res = await fetch('/api/generate', { method: 'POST' });
+                const data = await res.json();
+
+                if (!data.success) throw new Error(data.error);
+
+                // Show draft section
+                document.getElementById('generateSection').classList.add('hidden');
+                const draftSection = document.getElementById('draftSection');
+                draftSection.classList.remove('hidden');
+                draftSection.classList.add('fade-in');
+
+                // Populate data
+                document.getElementById('draftText').textContent = data.draft;
+                document.getElementById('metaTitle').textContent = data.article.title;
+                document.getElementById('metaUrl').innerHTML =
+                    `<a href="${data.article.url}" target="_blank">${new URL(data.article.url).hostname}</a>`;
+                document.getElementById('metaAudience').textContent = data.target_audience;
+                document.getElementById('metaScore').textContent = `${data.relevance_score}/10`;
+
+                updateWordCount(data.draft);
+                updateFeedbackHistory(data.feedback_history);
+                setProgress('review');
+                setStatus('Draft ready for review', 'active');
+                showToast('Draft generated successfully!', 'success');
+
+            } catch (err) {
+                showToast(`Error: ${err.message}`, 'error');
+                setStatus('Error occurred', 'idle');
+                resetProgress();
+            } finally {
+                isLoading = false;
+                setBtnLoading('generateBtn', 'generateBtnText', false);
+            }
+        }
+
+        async function reviseDraft() {
+            const feedback = document.getElementById('feedbackInput').value.trim();
+            if (!feedback) {
+                showToast('Please enter feedback first', 'error');
+                return;
+            }
+            if (isLoading) return;
+            isLoading = true;
+
+            setBtnLoading('reviseBtn', 'reviseBtnText', true, 'Revising...');
+            setStatus('Revising draft...', 'loading');
+
+            try {
+                const res = await fetch('/api/revise', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ feedback })
+                });
+                const data = await res.json();
+
+                if (!data.success) throw new Error(data.error);
+
+                document.getElementById('draftText').textContent = data.draft;
+                document.getElementById('feedbackInput').value = '';
+                updateWordCount(data.draft);
+                updateFeedbackHistory(data.feedback_history);
+                setProgress('review');
+                setStatus(`Revision ${data.revision_count} ready`, 'active');
+                showToast(`Revision ${data.revision_count} complete!`, 'success');
+
+            } catch (err) {
+                showToast(`Error: ${err.message}`, 'error');
+                setStatus('Revision failed', 'idle');
+            } finally {
+                isLoading = false;
+                setBtnLoading('reviseBtn', 'reviseBtnText', false);
+            }
+        }
+
+        async function approveDraft() {
+            if (isLoading) return;
+            isLoading = true;
+
+            setBtnLoading('approveBtn', 'approveBtnText', true, 'Sending...');
+            setStatus('Sending email...', 'loading');
+
+            try {
+                const res = await fetch('/api/approve', { method: 'POST' });
+                const data = await res.json();
+
+                if (!data.success) throw new Error(data.error);
+
+                setProgress('done');
+                setStatus('Approved & sent!', 'active');
+                showToast('Email sent successfully! 🎉', 'success');
+
+                // Reset after 3 seconds
+                setTimeout(() => {
+                    document.getElementById('draftSection').classList.add('hidden');
+                    document.getElementById('generateSection').classList.remove('hidden');
+                    resetProgress();
+                    updateFeedbackHistory([]);
+                    setStatus('Ready', 'idle');
+                }, 3000);
+
+            } catch (err) {
+                showToast(`Error: ${err.message}`, 'error');
+                setStatus('Send failed', 'idle');
+            } finally {
+                isLoading = false;
+                setBtnLoading('approveBtn', 'approveBtnText', false);
+            }
+        }
+
+        async function copyDraft() {
+            const text = document.getElementById('draftText').textContent;
+            if (!text) return;
+            try {
+                await navigator.clipboard.writeText(text);
+                const btn = document.getElementById('copyBtnText');
+                btn.innerHTML = '<span class="copy-check">✓ Copied!</span>';
+                setTimeout(() => { btn.innerHTML = '📋 Copy'; }, 2000);
+            } catch {
+                showToast('Copy failed — try selecting manually', 'error');
+            }
+        }
+
+        // Keyboard shortcut: Ctrl+Enter to revise
+        document.addEventListener('keydown', (e) => {
+            if (e.ctrlKey && e.key === 'Enter') {
+                const feedback = document.getElementById('feedbackInput');
+                if (document.activeElement === feedback && feedback.value.trim()) {
+                    reviseDraft();
+                }
+            }
+        });
+    </script>
+</body>
+</html>

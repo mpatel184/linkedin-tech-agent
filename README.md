@@ -1,83 +1,100 @@
-# LinkedIn Tech Content Curator Agent 🚀
+# LinkedIn Tech Agent
 
-An agentic AI workflow powered by **LangGraph** and **Gemini 2.5 Flash** that automatically fetches trending tech news, curates the best story for a professional LinkedIn audience, drafts an engaging post, and refines it interactively based on your feedback.
+An AI-assisted LinkedIn post generator for technical content. The app fetches current Hacker News stories, uses an LLM to pick a relevant engineering topic, drafts a LinkedIn post, lets you revise it from the browser, and can email the approved draft to you.
 
----
+## Features
 
-## 📌 Features
+- FastAPI web interface at `http://127.0.0.1:8501`
+- Hacker News story fetching
+- Gemini 2.5 Flash generation with Hugging Face fallback support
+- Browser-based draft review and revision loop
+- Copy button for the final LinkedIn post
+- Optional email delivery after approval
+- Terminal LangGraph mode for the original interactive flow
 
-- **Automated Curation**: Fetches the top stories on Hacker News dynamically.
-- **AI-Powered Evaluation**: Analyzes and filters articles for maximum LinkedIn engagement and professional relevance.
-- **Engaging Drafting**: Drafts structured posts featuring hooks, key technical takeaways, emoji bullet points, calls-to-action, and relevant hashtags.
-- **Human-in-the-Loop Gate**: Pauses execution to show you the draft and request approval or specific revision feedback.
-- **Interactive Revision Loop**: Adapts and rewrites the content based on your feedback until you type `yes`.
+## Project Structure
 
----
-
-## 🛠️ Architecture Workflow
-
-Here is how the LangGraph agent manages state and routes tasks:
-
-```mermaid
-graph TD
-    A[Start] --> B[Fetch HN News]
-    B --> C[Filter & Critique via Gemini]
-    C --> D[Draft LinkedIn Post]
-    D --> E[Human Gate: Review Draft]
-    E -->|Approved 'yes'| F[Print Success Post]
-    E -->|Needs Changes| G[Revise Draft via Gemini]
-    G --> E
-    F --> H[End]
+```text
+.
+├── agent.py              # LangGraph nodes and reusable pipeline functions
+├── web_app.py            # FastAPI app and API routes
+├── templates/
+│   └── index.html        # Browser UI
+├── requirements.txt      # Python dependencies
+└── .env.example          # Environment variable template
 ```
 
----
+## Setup
 
-## 🚀 Setup & Installation
+### 1. Create a virtual environment
 
-### 1. Prerequisites
-- Python 3.9+
-- Git
+Windows PowerShell:
 
-### 2. Clone and Setup
-If you haven't already, clone the repository:
-```bash
-git clone https://github.com/mpatel184/linkedin-tech-agent.git
-cd linkedin-tech-agent
-```
-
-### 3. Create a Virtual Environment
-Create and activate your Python virtual environment:
-```bash
-# Windows
+```powershell
 python -m venv venv
-venv\Scripts\activate
+.\venv\Scripts\Activate.ps1
+```
 
-# macOS / Linux
+macOS / Linux:
+
+```bash
 python3 -m venv venv
 source venv/bin/activate
 ```
 
-### 4. Install Dependencies
+### 2. Install dependencies
+
 ```bash
-pip install langchain-core langchain-google-genai langgraph pydantic python-dotenv requests
+python -m pip install --upgrade pip
+python -m pip install -r requirements.txt
 ```
 
-### 5. Environment Variables
-Create a `.env` file in the root directory (this is ignored by Git to keep your API keys secure):
+### 3. Configure environment variables
+
+Create a `.env` file in the project root. You can start from `.env.example`.
+
 ```env
 GOOGLE_API_KEY=your_gemini_api_key_here
+HF_TOKEN=optional_hugging_face_token_here
+
+EMAIL_SENDER=your_email@gmail.com
+EMAIL_PASSWORD=your_gmail_app_password
+EMAIL_RECEIVER=receiver_email@gmail.com
 ```
 
----
+`GOOGLE_API_KEY` or `HF_TOKEN` is required. Email settings are optional; if they are missing, approval still works but email sending is skipped.
 
-## 💻 How to Run
+## Run The Web App
 
-Execute the main agent script:
+Start the FastAPI server:
+
+```bash
+python web_app.py
+```
+
+Open this URL in your browser:
+
+```text
+http://127.0.0.1:8501
+```
+
+Use the app:
+
+1. Click `Generate Draft`.
+2. Review the selected article and generated LinkedIn post.
+3. Enter feedback and click `Revise` if needed.
+4. Click `Copy` to copy the post, or `Approve & Send Email` if email variables are configured.
+
+## Run The Terminal Agent
+
 ```bash
 python agent.py
 ```
 
-1. The agent will fetch the front-page articles.
-2. It will display the selected article, target audience, and the draft post.
-3. In the terminal, type `yes` to accept, or write feedback (e.g., *"Make it shorter and focus more on software architecture"*).
-4. Copy-paste the final printed output directly to your LinkedIn!
+The terminal mode runs the LangGraph workflow, shows the draft in the console, and waits for `yes` or revision feedback.
+
+## Troubleshooting
+
+- If generation says it cannot fetch Hacker News, check your internet connection or proxy settings.
+- If generation says Gemini failed, verify `GOOGLE_API_KEY` and quota. Add `HF_TOKEN` if you want the fallback model.
+- If email is skipped, create a Gmail App Password and set `EMAIL_SENDER`, `EMAIL_PASSWORD`, and `EMAIL_RECEIVER`.
